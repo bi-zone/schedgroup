@@ -24,6 +24,8 @@ type Group struct {
 	ctx    context.Context
 	cancel func()
 
+	withoutGoroutines bool
+
 	// Task runner and a heap of tasks to be run.
 	wg    sync.WaitGroup
 	mu    sync.Mutex
@@ -34,9 +36,25 @@ type Group struct {
 	lenC chan int
 }
 
+// Option allows to tune Group behaviour on creation.
+type Option func(*Group)
+
+// WithoutGoroutines forces Group to handle tasks in the main scheduler thread
+// (whereas by default task will be spawned in a separate goroutine). Useful when
+// you need to schedule many small tasks somewhere in the future and do not
+// want to spawn a goroutine for each of them.
+//
+// N.B. Hanging task will block Group from stopping or processing further tasks,
+// so it's a user responsibility to deal with long running tasks.
+func WithoutGoroutines() Option {
+	return func(g *Group) {
+		g.withoutGoroutines = true
+	}
+}
+
 // New creates a new Group which will use ctx for cancelation. If cancelation
 // is not a concern, use context.Background().
-func New(ctx context.Context) *Group {
+func New(ctx context.Context, opts ...Option) *Group {
 	// Monitor goroutine context and cancelation.
 	mctx, cancel := context.WithCancel(ctx)
 
@@ -48,6 +66,10 @@ func New(ctx context.Context) *Group {
 
 		addC: make(chan struct{}),
 		lenC: make(chan int),
+	}
+
+	for _, opt := range opts {
+		opt(g)
 	}
 
 	g.wg.Add(1)
@@ -207,6 +229,10 @@ func (g *Group) trigger(now time.Time) time.Time {
 	}()
 
 	for g.tasks.Len() > 0 {
+		if g.ctx.Err() != nil {
+			return time.Time{}
+		}
+
 		next := &g.tasks[0]
 		if next.Deadline.After(now) {
 			// Earliest scheduled task is not ready.
@@ -215,6 +241,12 @@ func (g *Group) trigger(now time.Time) time.Time {
 
 		// This task is ready, pop it from the heap and run it.
 		t := heap.Pop(&g.tasks).(task)
+
+		if g.withoutGoroutines {
+			t.Call()
+			continue
+		}
+
 		g.wg.Add(1)
 		go func() {
 			defer g.wg.Done()
