@@ -325,6 +325,39 @@ func TestGroupWaitAfterScheduled(t *testing.T) {
 	}
 }
 
+func TestGroupWithoutGoroutines(t *testing.T) {
+
+	// Ensure option WithoutGoroutines() blocks spawning new goroutine for each task.
+	// The idea of a test is running a blocking task and a usual task. The second one should not start.
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sg := schedgroup.New(ctx, schedgroup.WithoutGoroutines())
+
+	// Schedule blocking task in the past to run it immediately.
+	sg.Schedule(time.Now().Add(-1*time.Second), func() {
+		select {
+		case <-ctx.Done():
+			return
+		}
+	})
+
+	// Schedule a second task that shouldn't start while the first is working.
+	sg.Schedule(time.Now().Add(500*time.Millisecond), func() {
+		t.Fatalf("WithoutGoroutines option is not working")
+	})
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		_ = sg.Wait()
+		wg.Done()
+	}()
+
+	time.Sleep(1 * time.Second) // Wait to consider that the second task hasn't run.
+	cancel()                    // Stop Group and the first task.
+	wg.Wait()
+}
+
 // This example demonstrates typical use of a Group.
 func ExampleGroup_wait() {
 	// Create a Group which will not use a context for cancelation.
