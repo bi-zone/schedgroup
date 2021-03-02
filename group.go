@@ -224,7 +224,6 @@ func (g *Group) trigger(now time.Time) time.Time {
 			// Wait hasn't been called.
 			break
 		}
-
 		g.mu.Unlock()
 	}()
 
@@ -243,17 +242,17 @@ func (g *Group) trigger(now time.Time) time.Time {
 		t := heap.Pop(&g.tasks).(task)
 
 		if g.withoutGoroutines {
+			g.mu.Unlock()
 			t.Call()
-			continue
+			g.mu.Lock()
+		} else {
+			g.wg.Add(1)
+			go func() {
+				defer g.wg.Done()
+				t.Call()
+			}()
 		}
-
-		g.wg.Add(1)
-		go func() {
-			defer g.wg.Done()
-			t.Call()
-		}()
 	}
-
 	return time.Time{}
 }
 
