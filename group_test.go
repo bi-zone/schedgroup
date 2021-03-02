@@ -358,6 +358,24 @@ func TestGroupWithoutGoroutines(t *testing.T) {
 	wg.Wait()
 }
 
+func TestDeadLock(t *testing.T) {
+	done := make(chan struct{}, 1)
+	sg := schedgroup.New(context.Background(), schedgroup.WithoutGoroutines())
+
+	sg.Schedule(time.Now().Add(-1*time.Second), func() {
+		sg.Schedule(time.Now().Add(-1*time.Second), func() {
+			done <- struct{}{}
+		})
+	})
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("Failed to schedule a new function in a scheduled function.")
+	}
+	_ = sg.Wait()
+}
+
 // This example demonstrates typical use of a Group.
 func ExampleGroup_wait() {
 	// Create a Group which will not use a context for cancelation.
